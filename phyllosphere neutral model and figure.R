@@ -1,4 +1,3 @@
-#Here, we simulate a model that, for each plant (in 2016), starts with its initially observed community, and then, at each time step, (1) randomly applies a number of increases and decreases in OTU abundances equal to that observed on that plant during that time period, (2) randomly selects a number of new OTUs from the total soil community equal to the number of new OTUs observed to arrive on that plant during that time.
 #script by john guittar, guittarj@gmail.com, february 2019
 
 #### setup ####
@@ -23,39 +22,16 @@ meta_all <- read.table('Map_GLBRC_16S.txt', sep = '\t') %>%
     sample = sequence_name) %>%
   mutate_if(is.factor, as.character)
 
-#load unrarified data
-otus_unrarefied <- read.table('Removed_Chloro_Mito_otu.txt', sep = '\t', header = TRUE) %>%
-  gather(sample, abun, -X) %>%
-  select(sample, otu = X, abun) %>%
-  mutate(abun = ifelse(is.na(abun), 0, abun))
+otus_unrarefied <- read.table('Filtered_OTU_Table_JacksonMarch11.txt', sep = '\t', header = TRUE)
+otus_unrarefied <- data.frame(otu = row.names(otus_unrarefied), otus_unrarefied) %>%
+  gather(sample, abun, -otu)
 
-#rarefy to 1000 per sample
-#note that to rarefy, we sample with replacement. This forces all samples to have 1000 sequences (even those with fewer)
-set.seed(7)
-otus <- otus_unrarefied %>%
-  group_by(sample) %>%
-  filter(sum(abun) >= 1000) %>%
-  do(data.frame(otu = sample(rep(.$otu, times = .$abun), size = 1000))) %>%
-  group_by(sample, otu) %>%
-  summarise(abun = length(otu)) %>%
-  spread(otu, abun, fill = 0) %>%
-  gather(otu, abun, -sample) %>%
-  arrange(sample, otu)
-
-#load taxonomy data
-tax <- read.csv('taxonomy_combined_merged_trimmed_otus.csv') %>% 
-  mutate(otu = out, out = NULL) %>%
-  mutate_if(is.factor, function(x) gsub('.:', '', as.character(x)))
-
-#remove redundant samples
-otus_unrarefied <- filter(otus_unrarefied, !sample %in% c('G5R3_NF_09MAY2016_LD2','G5R4_MAIN_12SEP2016_LD2'))
-otus <- filter(otus, !sample %in% c('G5R3_NF_09MAY2016_LD2','G5R4_MAIN_12SEP2016_LD2'))
-meta <- filter(meta_all, sample %in% otus$sample)
+otus <- read.table('Rarefied_OTU_JacksonMarch11.txt', sep = '\t', header = TRUE)
+otus <- data.frame(otu = row.names(otus), otus) %>%
+  gather(sample, abun, -otu)
 
 #load cores from Nejc
 cores <- read.csv('core.csv', row.names = 1)
-
-#### null model ####
 
 #create soil pool -- all samples combined over both years
 soilpool <- otus_unrarefied %>% 
@@ -65,8 +41,8 @@ soilpool <- otus_unrarefied %>%
   summarise(abun = sum(abun)) %>%
   filter(abun > 0)
 
+#### null model ####
 ###identify new arriving OTUS for each plot at each time point
-
 #prepare dataframe columns used to compare pairs of sequential samples
 imms <- otus %>% 
   left_join(meta, by = "sample") %>%
@@ -182,7 +158,7 @@ comms <- comms %>%
 # 4) append and loop over until all dates/plots are simulated
 
 #for each community-plot
-if(FALSE) {
+if(TRUE) {
   for(i in 1:length(comms)) {
   
     #print progress
@@ -207,8 +183,8 @@ if(FALSE) {
     #then summarise by OTU
     #this looping approach is necessary because it ensures no taxon drops below 0 abundance...
     for(ii in 1:diffs) {
-      up <- sample(j$otu, 1, prob = j$abun)
-      down <- sample(j$otu, 1, prob = j$abun)
+      up <- sample(as.character(j$otu), 1, prob = j$abun)
+      down <- sample(as.character(j$otu), 1, prob = j$abun)
       j <- bind_rows(j,
                      mutate(j[1, ], otu = up, abun = 1),
                      mutate(j[1, ], otu = down, abun = -1)) %>%
@@ -288,6 +264,16 @@ j <- otus %>%
   filter(source == 'phyllosphere') %>%
   group_by(year, otu) %>%
   mutate(origin = ifelse(otu %in% soilpool$otu, 'soil', 'other'))
+
+#how many phyllosphere taxa were NEVER found in the soil?
+j %>% 
+  ungroup() %>% 
+  distinct(otu, origin) %>% 
+  summarise(
+    phyllosphere_otus_never_in_soil_pool = length(otu[origin == 'other']),
+    all_phyllosphere_otus = length(otu),
+    percent_otus_never_in_soil_pool = phyllosphere_otus_never_in_soil_pool / all_phyllosphere_otus) %>%
+  gather(var, val)
 
 #calculate column for calendar year
 meta$year_date <- meta$date
@@ -472,4 +458,3 @@ ps <- plot_grid(p1, p2, p3, p4, p5, p6, ncol = 3, align = 'hv')
 pss <- plot_grid(ps, myleg, ncol = 1, rel_heights = c(1, .08))
 pss
 ggsave('fig.pdf', width = 8, height = 5)
-
